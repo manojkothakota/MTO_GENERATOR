@@ -11,12 +11,12 @@ bolt sets, with CSV export.
 │  Next.js    │ ───────────────────────▶ │  FastAPI                  │
 │  frontend   │  POST /api/upload        │  /api/upload               │
 │             │ ◀─────────────────────── │    -> preprocess (PDF→PNG) │
-│  upload +   │   { job_id }             │    -> Gemini vision call   │
+│  upload +   │   { job_id }             │    -> Groq vision call      │
 │  results UI │                          │       (or MOCK if no key)  │
-│             │  GET /api/mto/{id}       │    -> Pydantic validation  │
-│             │ ◀─────────────────────── │    -> derive gasket/bolt   │
-│             │   MTO JSON               │    -> summary totals       │
-│             │                          │    -> in-memory job store  │
+│             │  GET /api/mto/{id}       │    -> Pydantic validation   │
+│             │ ◀─────────────────────── │    -> derive gasket/bolt    │
+│             │   MTO JSON               │    -> summary totals        │
+│             │                          │    -> in-memory job store   │
 │             │  GET /api/mto/{id}/csv   │                            │
 │             │ ◀─────────────────────── │  /api/mto/{id}/csv (CSV)  │
 └─────────────┘                          │  /api/health               │
@@ -28,8 +28,8 @@ bolt sets, with CSV export.
   done/error`. Chosen over Pages Router simply because it's the current
   default/recommended Next.js pattern and keeps the client-only upload logic
   in one component (`"use client"`).
-- **Backend**: FastAPI, Pydantic v2, `google-generativeai` for Gemini,
-  PyMuPDF for PDF→image rendering. Clear module boundaries:
+- **Backend**: FastAPI, Pydantic v2, the `groq` Python client for the Groq
+  vision calls, and PyMuPDF for PDF→image rendering. Clear module boundaries:
   - `app/models.py` – Pydantic schema (MTOItem, DrawingMeta, Summary, Job)
   - `app/mock_data.py` – deterministic mock MTO
   - `app/pipeline.py` – preprocess / extract / validate / derive / summarize
@@ -42,7 +42,7 @@ The brief allows a synchronous single-call design. We use the **suggested
 job-based contract** (`POST /api/upload` → `{job_id}`, then
 `GET /api/mto/{job_id}`) but run the pipeline **synchronously inside**
 `POST /api/upload` rather than spinning up a background worker — a single
-Gemini call takes a few seconds, so a queue wasn't worth the complexity for
+Groq call takes a few seconds, so a queue wasn't worth the complexity for
 this assessment. The job is already `done` by the time `/api/upload`
 returns. This keeps the frontend contract stable and forward-compatible: if
 extraction moved to a background task (e.g. Celery/RQ or FastAPI
@@ -60,7 +60,7 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env            # leave GEMINI_API_KEY blank to run in mock mode
+cp .env.example .env            # leave GROQ_API_KEY blank to run in mock mode
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -90,7 +90,7 @@ pytest tests/ -v
 ### Docker Compose (bonus, optional)
 
 ```bash
-GEMINI_API_KEY=your_key_here docker compose up --build
+GROQ_API_KEY=your_key_here docker compose up --build
 ```
 
 ## 3. Environment variables
@@ -98,11 +98,11 @@ GEMINI_API_KEY=your_key_here docker compose up --build
 **`backend/.env`**
 | Variable | Required | Purpose |
 |---|---|---|
-| `AI_PROVIDER` | No | Force `gemini`, `groq`, or `mock` explicitly. If unset, Groq is used when `GROQ_API_KEY` is set, else Gemini when `GEMINI_API_KEY` is set, else mock. |
-| `GEMINI_API_KEY` | No | Free key from aistudio.google.com. |
-| `GEMINI_MODEL` | No | Defaults to `gemini-2.5-flash`. |
-| `GROQ_API_KEY` | No | Free key from console.groq.com/keys. Fast inference, generous free tier. |
+| `AI_PROVIDER` | No | Forces `groq`, `gemini`, or `mock` explicitly. If unset, Groq is used when `GROQ_API_KEY` is set (this is the provider actually used for this submission), else Gemini when `GEMINI_API_KEY` is set, else mock. |
+| `GROQ_API_KEY` | No | Free key from console.groq.com/keys. Fast inference, generous free tier. This is the provider used for this submission. |
 | `GROQ_MODEL` | No | Defaults to `meta-llama/llama-4-scout-17b-16e-instruct` (Groq's current vision model with JSON mode support). |
+| `GEMINI_API_KEY` | No | Optional alternative provider. Free key from aistudio.google.com. |
+| `GEMINI_MODEL` | No | Defaults to `gemini-2.5-flash`. |
 | `CORS_ORIGINS` | No | Defaults to `http://localhost:3000`. |
 
 If none of the keys are set (or extraction fails for any reason), the app automatically serves a clearly-labelled mock MTO — nothing crashes.
@@ -117,19 +117,19 @@ If none of the keys are set (or extraction fails for any reason), the app automa
 1. **Pre-process** (`pipeline.preprocess`): if the upload is a PDF, render
    page 1 to a PNG at 200 DPI with PyMuPDF (multi-page PDFs → first sheet
    only; see limitations). Images pass through unchanged.
-2. **Extract** (`pipeline.extract_with_gemini`): the PNG is sent to Gemini
-   (`gemini-2.5-flash` by default) with `response_mime_type: application/json`
-   and a **prompt containing the full target JSON schema** and the domain
-   rules from the brief (pipe by length, everything else by count, bolts by
-   set, derive gaskets/bolts per flanged joint if not drawn, use real
+2. **Extract** (`pipeline.extract_with_groq`): the PNG is sent to Groq
+   (`meta-llama/llama-4-scout-17b-16e-instruct` by default) with JSON mode
+   enabled and a **prompt containing the full target JSON schema** and the
+   domain rules from the brief (pipe by length, everything else by count,
+   bolts by set, derive gaskets/bolts per flanged joint if not drawn, use real
    ASME/ASTM vocabulary). The full prompt lives in `pipeline.py` /
    `EXTRACTION_PROMPT` — it is part of the deliverable, not hidden.
-3. **Validate** (`pipeline.extract_with_gemini` + `app/models.py`): the JSON
+3. **Validate** (`pipeline.extract_with_groq` + `app/models.py`): the JSON
    response is parsed and pushed through Pydantic `MTOItem`/`DrawingMeta`
    models. Any malformed/missing field raises inside a `try/except` in
    `run_pipeline`, which **falls back to the mock MTO** rather than ever
    returning a 500 to the user for an LLM hiccup.
-4. **Derive** (`pipeline._derive_joint_consumables`): if Gemini didn't
+4. **Derive** (`pipeline._derive_joint_consumables`): if Groq didn't
    already emit GASKET/BOLT rows, we add one GASKET row and one BOLT row
    with `quantity = number of flanges detected` — the domain convention from
    Section 2.2 of the brief.
@@ -140,11 +140,11 @@ If none of the keys are set (or extraction fails for any reason), the app automa
 
 ### Mock mode (graceful degradation)
 
-If `GEMINI_API_KEY` is unset, `run_pipeline` skips the network call entirely
+If `GROQ_API_KEY` is unset, `run_pipeline` skips the network call entirely
 and returns `mock_data.build_mock_mto()` — a hand-built, schema-valid MTO for
 a representative 6" line, tagged `"mode": "mock"`. The same tag drives a
 visible amber badge in the UI so evaluators always know which mode they're
-looking at. This also fires automatically if Gemini errors or returns
+looking at. This also fires automatically if Groq errors or returns
 unparseable JSON, with the reason surfaced in `result.warnings`.
 
 ### Accuracy strategy — what to expect
@@ -197,7 +197,7 @@ status so the UI can show granular progress instead of one spinner.
 1. New → Web Service → connect this repo, root directory `backend/`.
 2. Build command: `pip install -r requirements.txt`
 3. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-4. Add env vars: `GEMINI_API_KEY` (optional), `CORS_ORIGINS=https://<your-vercel-domain>`.
+4. Add env vars: `GROQ_API_KEY` (optional), `CORS_ORIGINS=https://<your-vercel-domain>`.
 
 **Frontend on Vercel**
 1. New Project → import this repo, root directory `frontend/`.
