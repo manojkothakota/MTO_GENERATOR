@@ -4,6 +4,18 @@ Upload one piping isometric drawing (PNG / JPG / PDF) and get back a structured
 Material Take-Off (MTO): a table of pipe, fittings, flanges, valves, gaskets and
 bolt sets, with CSV export.
 
+## Live Demo
+
+**App:** [https://mto-generator-alpha.vercel.app/](https://mto-generator-alpha.vercel.app/)
+
+**Backend API:** `https://mto-generator-jok9.onrender.com`
+
+> Note: the backend is on Render's free tier and cold-starts after inactivity —
+> the first upload after idling may take ~30–50s while the server spins up.
+> The UI's "processing" spinner covers this gracefully.
+
+
+
 ## 1. Architecture
 
 ```
@@ -193,15 +205,17 @@ status so the UI can show granular progress instead of one spinner.
 
 ## 6. Deployment (Render + Vercel)
 
+This project is deployed live — see **Live Demo** above for links.
+
 **Backend on Render**
 1. New → Web Service → connect this repo, root directory `backend/`.
 2. Build command: `pip install -r requirements.txt`
 3. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-4. Add env vars: `GROQ_API_KEY` (optional), `CORS_ORIGINS=https://<your-vercel-domain>`.
+4. Add env vars: `GROQ_API_KEY` (optional), `CORS_ORIGINS=https://mto-generator-alpha.vercel.app`.
 
 **Frontend on Vercel**
 1. New Project → import this repo, root directory `frontend/`.
-2. Add env var: `NEXT_PUBLIC_API_URL=https://<your-render-backend>.onrender.com`.
+2. Add env var: `NEXT_PUBLIC_API_URL=https://mto-generator-jok9.onrender.com`.
 3. Deploy.
 
 Note Render's free tier cold-starts after inactivity; the first request
@@ -214,6 +228,21 @@ gracefully rather than erroring.
 backend/     FastAPI app + tests + Dockerfile
 frontend/    Next.js app + Dockerfile
 samples/     one small self-generated sample isometric (for testing)
+screenshots/ input drawing + output MTO screenshots (referenced in this README)
 docker-compose.yml
 README.md
 ```
+
+## Output
+
+**Input** — a hand-marked-up piping isometric (`samples/`):
+
+![Input isometric drawing](https://github.com/manojkothakota/MTO_GENERATOR/blob/55bf77503973d5aa69898c73fde6300cf48a1723/sample/Screenshot%202026-07-08%20120335.png)
+
+**Output** — the extracted Material Take-Off, live on the deployed app:
+
+![Live app — MTO output](https://github.com/manojkothakota/MTO_GENERATOR/blob/55bf77503973d5aa69898c73fde6300cf48a1723/sample/Screenshot%202026-07-07%20232655.png)
+
+**Output** — Material Take-Off table detail, with per-item confidence scores and CSV export:
+
+![MTO table detail](https://github.com/manojkothakota/MTO_GENERATOR/blob/55bf77503973d5aa69898c73fde6300cf48a1723/sample/Screenshot%202026-07-07%20232735%20-%20Copy.png)
